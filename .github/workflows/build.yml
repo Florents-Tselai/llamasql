@@ -1,0 +1,64 @@
+name: build
+on: [ push, pull_request ]
+jobs:
+  ubuntu:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        llamacpp-version: ["b4079"]
+        include:
+          - postgres: 18
+            os: ubuntu-24.04
+#          - postgres: 17
+#            os: ubuntu-24.04
+#          - postgres: 16
+#            os: ubuntu-24.04
+#          - postgres: 15
+#            os: ubuntu-22.04
+#          - postgres: 14
+#            os: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: |
+          sudo apt update
+          sudo apt install -y pkg-config wget cmake build-essential curl git libcurl4-openssl-dev
+
+      - name: Install llama.cpp from source
+        run: |
+          cd /tmp
+          wget "https://github.com/ggerganov/llama.cpp/archive/refs/tags/${{ matrix.llamacpp-version }}.tar.gz"
+          tar xzf ${{ matrix.llamacpp-version }}.tar.gz
+          cd llama.cpp-${{ matrix.llamacpp-version }}
+          mkdir build
+          cd build
+          cmake .. \
+            -DGGML_METAL=OFF \
+            -DGGML_RPC=ON \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+            
+          cmake --build . --config Release -j $(sysctl -n hw.logicalcpu)
+          sudo make install
+
+      - uses: ankane/setup-postgres@v1
+        with:
+          postgres-version: ${{ matrix.postgres }}
+          dev-files: true
+
+      - run: make all -j
+
+      - run: sudo make install
+
+      - name: Add shared_preload_libraries and restart PostgreSQL
+        run: |
+          echo "shared_preload_libraries = 'pgllama'" | sudo tee -a "/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf"
+          sudo systemctl restart postgresql@${{ matrix.postgres }}-main.service
+
+      - run: make installcheck
+
+      - if: ${{ failure() }}
+        run: cat regression.diffs
+

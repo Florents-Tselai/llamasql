@@ -1,0 +1,26 @@
+.deps/
+.idea/
+*.o
+*.so
+*.dylib
+pgdata/
+build/
+dist/
+*.egg-info/
+archive/
+venv/
+
+/*.png
+/results/
+/pgdata/
+/regression.diffs
+/regression.out
+llama-*
+
+# Simplify for now
+/docs/
+.readthedocs.yaml
+README.md.1
+.dockerignore
+Dockerfile
+examples/

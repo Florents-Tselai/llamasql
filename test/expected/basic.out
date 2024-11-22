@@ -1,0 +1,153 @@
+/* ---------- llama_model_type ---------- */
+SELECT '/tmp/qwen2.gguf'::llama_model;
+  llama_model  
+---------------
+ qwen2 1B Q8_0
+(1 row)
+
+/* ---------- llama_model metadata ---------- */
+SELECT llama_model_desc('/tmp/qwen2.gguf');
+ llama_model_desc 
+------------------
+ qwen2 1B Q8_0
+(1 row)
+
+SELECT pg_size_pretty(llama_model_size('/tmp/qwen2.gguf'::llama_model));
+ pg_size_pretty 
+----------------
+ 501 MB
+(1 row)
+
+SELECT llama_model_n_params('/tmp/qwen2.gguf'::llama_model);
+ llama_model_n_params 
+----------------------
+            494032768
+(1 row)
+
+SELECT llama_model_has_encoder('/tmp/qwen2.gguf'::llama_model);
+ llama_model_has_encoder 
+-------------------------
+ f
+(1 row)
+
+SELECT llama_model_has_decoder('/tmp/qwen2.gguf'::llama_model);
+ llama_model_has_decoder 
+-------------------------
+ t
+(1 row)
+
+SELECT llama_model_is_recurrent('/tmp/qwen2.gguf'::llama_model);
+ llama_model_is_recurrent 
+--------------------------
+ f
+(1 row)
+
+/* ---------- llama_token_type ---------- */
+SELECT 9707::llama_token; -- a llama_token is just an integer
+ llama_token 
+-------------
+        9707
+(1 row)
+
+SELECT '{785,3974,13876,38835,34208}'::llama_token[];
+         llama_token          
+------------------------------
+ {785,3974,13876,38835,34208}
+(1 row)
+
+/* ---------- vocab / tokens---------- */
+SELECT llama_token_text('/tmp/qwen2.gguf', 9707);
+ llama_token_text 
+------------------
+ Hello
+(1 row)
+
+/* ---------- special tokens ---------- */
+SELECT llama_token_bos('/tmp/qwen2.gguf');
+ llama_token_bos 
+-----------------
+               1
+(1 row)
+
+SELECT llama_token_eos('/tmp/qwen2.gguf');
+ llama_token_eos 
+-----------------
+          151645
+(1 row)
+
+SELECT llama_token_eot('/tmp/qwen2.gguf');
+ llama_token_eot 
+-----------------
+          151645
+(1 row)
+
+SELECT llama_token_cls('/tmp/qwen2.gguf');
+ llama_token_cls 
+-----------------
+              -1
+(1 row)
+
+SELECT llama_token_sep('/tmp/qwen2.gguf');
+ llama_token_sep 
+-----------------
+              -1
+(1 row)
+
+SELECT llama_token_nl('/tmp/qwen2.gguf');
+ llama_token_nl 
+----------------
+         148848
+(1 row)
+
+SELECT llama_token_pad('/tmp/qwen2.gguf');
+ llama_token_pad 
+-----------------
+          151643
+(1 row)
+
+/*  ---------- tokenization ---------- */
+-- CLI: llama-tokenize -m /tmp/qwen2.gguf -p "Hello World" --ids
+-- Also reproduce llama-cppy-python/tests/test_llama.py: test_real_model
+SELECT llama_tokenize('/tmp/qwen2.gguf', 'Hello, world!', add_special => true, parse_special => true);
+  llama_tokenize  
+------------------
+ {9707,11,1879,0}
+(1 row)
+
+SELECT llama_tokenize('/tmp/qwen2.gguf', 'The quick brown fox jumps', add_special => true, parse_special => true);
+        llama_tokenize        
+------------------------------
+ {785,3974,13876,38835,34208}
+(1 row)
+
+SELECT llama_detokenize('/tmp/qwen2.gguf'::llama_model,
+                        '{9707,11,1879,0}'::llama_token[],
+                        remove_special => true, unparse_special => true);
+ llama_detokenize 
+------------------
+ Hello, world!
+(1 row)
+
+SELECT llama_detokenize('/tmp/qwen2.gguf'::llama_model,
+                        '{785,3974,13876,38835,34208}'::llama_token[],
+                        remove_special => true, unparse_special => true);
+     llama_detokenize      
+---------------------------
+ The quick brown fox jumps
+(1 row)
+
+/* ---------- Generate API ---------- */
+SELECT llama_generate('/tmp/qwen2.gguf', 'The quick brown fox jumps');
+    llama_generate    
+----------------------
+ {916,279,15678,5562}
+(1 row)
+
+SELECT llama_detokenize('/tmp/qwen2.gguf'::llama_model,
+                        '{916,279,15678,5562}'::llama_token[],
+                        remove_special => true, unparse_special => true);
+  llama_detokenize  
+--------------------
+  over the lazy dog
+(1 row)
+
