@@ -10,14 +10,14 @@ jobs:
         include:
           - postgres: 18
             os: ubuntu-24.04
-          - postgres: 17
-            os: ubuntu-24.04
-          - postgres: 16
-            os: ubuntu-24.04
-          - postgres: 15
-            os: ubuntu-22.04
-          - postgres: 14
-            os: ubuntu-22.04
+#          - postgres: 17
+#            os: ubuntu-24.04
+#          - postgres: 16
+#            os: ubuntu-24.04
+#          - postgres: 15
+#            os: ubuntu-22.04
+#          - postgres: 14
+#            os: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4

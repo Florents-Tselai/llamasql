@@ -18,8 +18,6 @@ venv/
 llama-*
 
 # Simplify for now
-/docs/
-.readthedocs.yaml
 README.md.1
 .dockerignore
 Dockerfile

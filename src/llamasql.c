@@ -456,8 +456,6 @@ pg_llama_tokenize(PG_FUNCTION_ARGS)
     PG_RETURN_ARRAYTYPE_P(array);
 }
 
-
-
 Datum
 pg_llama_detokenize(PG_FUNCTION_ARGS)
 {

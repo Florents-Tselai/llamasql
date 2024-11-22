@@ -13,16 +13,10 @@
 #include "utils/datetime.h"
 #include "utils/date.h"
 #include "utils/array.h"
-#include "utils/fmgroids.h"
-#include "catalog/pg_type.h"
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <utils/memutils.h>
 #include <utils/guc.h>
-#include <utils/guc_hooks.h>
-#include <utils/guc_tables.h>
-#include <limits.h>
 
 
 #if PG_VERSION_NUM >= 160000
