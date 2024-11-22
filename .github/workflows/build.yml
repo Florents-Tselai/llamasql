@@ -6,17 +6,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llamacpp-version: ["b4079"]
         include:
           - postgres: 18
+            llamacpp-version: "b4079"
             os: ubuntu-24.04
           - postgres: 17
+            llamacpp-version: "b4079"
             os: ubuntu-24.04
           - postgres: 16
+            llamacpp-version: "b4079"
             os: ubuntu-24.04
           - postgres: 15
+            llamacpp-version: "b4079"
             os: ubuntu-22.04
           - postgres: 14
+            llamacpp-version: "b4079"
             os: ubuntu-22.04
 
     steps:
