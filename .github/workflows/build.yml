@@ -10,8 +10,8 @@ jobs:
         include:
           - postgres: 18
             os: ubuntu-24.04
-#          - postgres: 17
-#            os: ubuntu-24.04
+          - postgres: 17
+            os: ubuntu-24.04
 #          - postgres: 16
 #            os: ubuntu-24.04
 #          - postgres: 15
