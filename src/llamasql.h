@@ -147,7 +147,8 @@ PG_FUNCTION_INFO_V1(pg_llama_detokenize);
 
 /* ---------- Generate API ---------- */
 
-PG_FUNCTION_INFO_V1(pg_llama_generate);
+PG_FUNCTION_INFO_V1(pg_llama_generate_from_text);
+PG_FUNCTION_INFO_V1(pg_llama_generate_from_tokens);
 
 /* ---------- Defaults ---------- */
 

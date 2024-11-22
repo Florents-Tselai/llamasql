@@ -491,7 +491,7 @@ pg_llama_detokenize(PG_FUNCTION_ARGS)
 }
 
 Datum
-pg_llama_generate(PG_FUNCTION_ARGS)
+pg_llama_generate_from_text(PG_FUNCTION_ARGS)
 {
     const int num_tokens_to_generate = 4;
 
@@ -566,6 +566,93 @@ pg_llama_generate(PG_FUNCTION_ARGS)
     );
 
     free(tokens);
+    pfree(result_tokens);
+    llama_free_model(model);
+
+    PG_RETURN_ARRAYTYPE_P(array);
+}
+
+Datum
+pg_llama_generate_from_tokens(PG_FUNCTION_ARGS)
+{
+    const int num_tokens_to_generate = 4;
+
+    // Get the model and input tokens from PostgreSQL arguments
+    llama_model *model = PG_GETARG_LLAMA_MODEL(0);
+    int n_input_tokens;
+    const llama_token *input_tokens = PG_GETARG_LLAMA_TOKENS(1, n_input_tokens);
+
+    struct llama_context_params context_params = PG_GETARG_LLAMA_CONTEXT_PARAMS(2);
+    struct llama_model_params model_params = PG_GETARG_LLAMA_MODEL_PARAMS(3);
+
+    // Configure model and context parameters
+    model_params.use_mmap = false;
+    model_params.use_mlock = false;
+    model_params.check_tensors = false;
+
+    context_params.n_ctx = 16;
+    context_params.n_batch = 16;
+    context_params.n_ubatch = 16;
+    context_params.n_threads = 4;
+    context_params.n_threads_batch = 4;
+    context_params.logits_all = false;
+    context_params.flash_attn = true;
+
+    // Create a new context
+    struct llama_context *context = llama_new_context_with_model(model, context_params);
+
+    // Initialize the sampler
+    struct llama_sampler_chain_params sampler_params = llama_sampler_chain_default_params();
+    sampler_params.no_perf = false;
+    struct llama_sampler *sampler = llama_sampler_chain_init(sampler_params);
+
+    if (!sampler) {
+        ereport(ERROR, (errmsg("Failed to initialize sampler chain")));
+    }
+
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(50));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.8));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(1337));
+
+    Datum *result_tokens = palloc(num_tokens_to_generate * sizeof(Datum));
+
+    // Copy input tokens into a dynamic buffer for modification
+    llama_token *current_tokens = malloc((n_input_tokens + 1) * sizeof(llama_token));
+    memcpy(current_tokens, input_tokens, n_input_tokens * sizeof(llama_token));
+    int n_tokens = n_input_tokens;
+
+    for (int i = 0; i < num_tokens_to_generate; i++) {
+        // Create a batch with the current tokens
+        struct llama_batch batch = llama_batch_get_one(current_tokens, n_tokens);
+
+        // Decode the batch
+        if (llama_decode(context, batch) < 0) {
+            free(current_tokens);
+            ereport(ERROR, (errmsg("Failed to encode the batch")));
+        }
+
+        // Sample the next token
+        llama_token token_id = llama_sampler_sample(sampler, context, -1);
+        result_tokens[i] = Int32GetDatum((int32)token_id);
+
+        // Update the current tokens buffer with the newly generated token
+        current_tokens[0] = token_id;
+        n_tokens = 1;
+    }
+
+    // Construct the resulting array
+    ArrayType *array = construct_array(
+        result_tokens,
+        num_tokens_to_generate,
+        LLAMATOKENOID,
+        sizeof(llama_token_type),
+        true,
+        'i'
+    );
+
+    // Free allocated memory
+    free(current_tokens);
     pfree(result_tokens);
     llama_free_model(model);
 

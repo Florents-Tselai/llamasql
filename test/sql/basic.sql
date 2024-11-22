@@ -46,7 +46,15 @@ SELECT llama_detokenize('/tmp/qwen2.gguf'::llama_model,
 
 /* ---------- Generate API ---------- */
 
-SELECT llama_generate('/tmp/qwen2.gguf', 'The quick brown fox jumps');
+-- Input:   'The quick brown fox jumps' <--> {785,3974,13876,38835,34208}
+-- Output:  ' over the lazy dog' <--> {916,279,15678,5562}
+
+SELECT llama_generate_from_text('/tmp/qwen2.gguf', 'The quick brown fox jumps');
+
+-- from tokens
+SELECT llama_tokenize('/tmp/qwen2.gguf', 'The quick brown fox jumps', add_special => true, parse_special => true);
+
+SELECT llama_generate_from_tokens('/tmp/qwen2.gguf', '{785,3974,13876,38835,34208}'::llama_token[]);
 
 SELECT llama_detokenize('/tmp/qwen2.gguf'::llama_model,
                         '{916,279,15678,5562}'::llama_token[],

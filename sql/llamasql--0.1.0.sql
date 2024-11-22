@@ -93,8 +93,14 @@ CREATE TYPE llama_chat_message AS (
 
 /* ---------- Generate API ---------- */
 
-CREATE FUNCTION llama_generate(model llama_model,
+CREATE FUNCTION llama_generate_from_text(model llama_model,
                                prompt text,
                                context_params jsonb default null,
                                model_params jsonb default null)
-    returns llama_token[] LANGUAGE C AS 'MODULE_PATHNAME', 'pg_llama_generate';
+    returns llama_token[] LANGUAGE C AS 'MODULE_PATHNAME', 'pg_llama_generate_from_text';
+
+CREATE FUNCTION llama_generate_from_tokens(model llama_model,
+                                           tokens llama_token[],
+                                         context_params jsonb default null,
+                                         model_params jsonb default null)
+    returns llama_token[] LANGUAGE C AS 'MODULE_PATHNAME', 'pg_llama_generate_from_tokens';
