@@ -1,0 +1,10 @@
+/* I like this https://github.com/psycopg/psycopg/blob/master/docs/_static/psycopg.css */
+p.rubric {
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+table.align-default td,
+table.align-default th {
+    text-align: left;
+}
