@@ -10,14 +10,14 @@ jobs:
         include:
           - postgres: 18
             os: ubuntu-24.04
-#          - postgres: 17
-#            os: ubuntu-24.04
-#          - postgres: 16
-#            os: ubuntu-24.04
-#          - postgres: 15
-#            os: ubuntu-22.04
-#          - postgres: 14
-#            os: ubuntu-22.04
+          - postgres: 17
+            os: ubuntu-24.04
+          - postgres: 16
+            os: ubuntu-24.04
+          - postgres: 15
+            os: ubuntu-22.04
+          - postgres: 14
+            os: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
 
       - name: Add shared_preload_libraries and restart PostgreSQL
         run: |
-          echo "shared_preload_libraries = 'pgllama'" | sudo tee -a "/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf"
+          echo "shared_preload_libraries = 'llamasql'" | sudo tee -a "/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf"
           sudo systemctl restart postgresql@${{ matrix.postgres }}-main.service
 
       - run: make installcheck
