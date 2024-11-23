@@ -8,10 +8,10 @@ jobs:
       matrix:
         include:
           - postgres: 18
-            llamacpp-version: "b4079"
+            llamacpp-version: ["b4079", "b4153"]
             os: ubuntu-24.04
           - postgres: 17
-            llamacpp-version: "b4079"
+            llamacpp-version: ["b4079", "b4153"]
             os: ubuntu-24.04
 #          - postgres: 16
 #            llamacpp-version: "b4079"
