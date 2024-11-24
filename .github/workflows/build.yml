@@ -61,9 +61,6 @@ jobs:
           echo "shared_preload_libraries = 'llamasql'" | sudo tee -a "/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf"
           sudo systemctl restart postgresql.service
 
-      - if: ${{ failure() }}
-        run: journalctl -xeu postgresqlservice
-
       - run: make installcheck
 
       - if: ${{ failure() }}
