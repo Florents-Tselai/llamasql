@@ -43,6 +43,9 @@ typedef struct llama_model llama_model;
 llama_context_params    parse_context_params_from_jsonb(Jsonb *in_context_params);
 llama_model_params      parse_model_params_from_jsonb(Jsonb *in_model_params);
 
+#define PG_GETARG_LLAMA_CONTEXT_PARAMS(n) PG_ARGISNULL(n) ? llama_context_default_params() : parse_context_params_from_jsonb(PG_GETARG_JSONB_P(n))
+#define PG_GETARG_LLAMA_MODEL_PARAMS(n) PG_ARGISNULL(n) ? llama_model_default_params() : parse_model_params_from_jsonb(PG_GETARG_JSONB_P(n))
+
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
@@ -150,7 +153,7 @@ PG_FUNCTION_INFO_V1(pg_llama_detokenize);
 PG_FUNCTION_INFO_V1(pg_llama_generate_from_text);
 PG_FUNCTION_INFO_V1(pg_llama_generate_from_tokens);
 
-/* ---------- Defaults ---------- */
+/* ---------- Variou Defaults ---------- */
 
 #define BFRSZ 250
 

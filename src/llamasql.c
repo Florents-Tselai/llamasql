@@ -150,8 +150,6 @@ llama_model_params parse_model_params_from_jsonb(Jsonb *in_model_params)
     return model_params;
 }
 
-#define PG_GETARG_LLAMA_CONTEXT_PARAMS(n) PG_ARGISNULL(n) ? llama_context_default_params() : parse_context_params_from_jsonb(PG_GETARG_JSONB_P(n))
-#define PG_GETARG_LLAMA_MODEL_PARAMS(n) PG_ARGISNULL(n) ? llama_model_default_params() : parse_model_params_from_jsonb(PG_GETARG_JSONB_P(n))
 
 /* ---------- MODEL CACHE ----------*/
 
