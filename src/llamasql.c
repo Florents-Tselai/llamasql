@@ -151,24 +151,175 @@ llama_model_params parse_model_params_from_jsonb(Jsonb *in_model_params)
 }
 
 
-/* ---------- MODEL CACHE ----------*/
+#include "fmgr.h"
+#include "funcapi.h"
+#include "utils/jsonb.h"
+#include "storage/lwlock.h"
+#include "storage/dsm_registry.h"
+#include "storage/shmem.h"
 
-PGDLLEXPORT void _PG_init(void);
+
+#define LLAMASQL_MAX_MODEL_FILENAME NAMEDATALEN
+#define LLAMASQL_MAX_MODEL_FILE_SIZE (1024 * 1024 * 1024) /* 1GB */
+#define LLAMASQL_SHMEM_NAME "llamasql"
+
+/*
+ * FTTB, for simplicity we only cache *one* model.
+ * In the future we may want to have a few slots available.
+ *
+ */
+typedef struct LLamaSQLSharedState
+{
+    LWLock          lock;
+
+    char    path[LLAMASQL_MAX_MODEL_FILENAME];              /* filepath to be used as a key*/
+    int32	vl_len_;                        /* number of bytes in the file */
+    char    data[FLEXIBLE_ARRAY_MEMBER];    /* actual file bytes */
+
+} LLamaSQLSharedState;
+
+/* Pointers to shared-memory */
+static LLamaSQLSharedState *g_state = NULL;
+
+static void
+llsql_init_state(void *ptr)
+{
+    LLamaSQLSharedState *state = (LLamaSQLSharedState *) ptr;
+    LWLockInitialize(&state->lock, LWLockNewTrancheId());
+
+}
+
+static bool
+llamasql_init_shmem(void)
+{
+    bool found;
+    g_state = GetNamedDSMSegment(LLAMASQL_SHMEM_NAME,
+                                   offsetof(LLamaSQLSharedState, data) + LLAMASQL_MAX_MODEL_FILE_SIZE,
+                                   llsql_init_state,
+                                   &found);
+    LWLockRegisterTranche(g_state->lock.tranche, LLAMASQL_SHMEM_NAME);
+
+    return found;
+}
 
 void
 _PG_init(void)
 {
     llama_backend_init();
-
+    llamasql_init_shmem();
 }
 
 llama_model* load_llama_model_from_cstring(const char* path)
 {
+    llama_model *result = NULL;
     llama_model_params model_params = llama_model_default_params();
-    llama_model* model = llama_load_model_from_file(path, model_params);
-    if (model == NULL)
-        elog(ERROR, "llama_load_model_from_file failed");
-    return model;
+
+    char *model_swap_name = "modelswap.gguf";
+
+    LWLockAcquire(&g_state->lock, LW_EXCLUSIVE);
+    bool model_is_cached = strcmp(g_state->path, path) == 0;
+    LWLockRelease(&g_state->lock);
+
+    if (!model_is_cached)
+    {
+        Datum model_file = DirectFunctionCall1(pg_read_binary_file_all, PointerGetDatum(cstring_to_text(path)));
+        LWLockAcquire(&g_state->lock, LW_EXCLUSIVE);
+
+        memset(g_state->path, 0, LLAMASQL_MAX_MODEL_FILENAME);
+        strncpy(g_state->path, path, LLAMASQL_MAX_MODEL_FILENAME-1);
+        g_state->path[LLAMASQL_MAX_MODEL_FILENAME-1] = '\0';
+        g_state->vl_len_ = VARSIZE_ANY_EXHDR(model_file);
+        memcpy(g_state->data, VARDATA_ANY(model_file), g_state->vl_len_);
+
+
+        printf("shared cache: path=%s\tvl_len=%d\n", g_state->path, g_state->vl_len_);
+
+        FILE *fd = AllocateFile(model_swap_name, PG_BINARY_W);
+        if (!fd) elog(ERROR, "Failed to open %s for writing\n", model_swap_name);
+
+        /* Write the binary data */
+        if (fwrite(g_state->data, g_state->vl_len_, 1, fd) != 1)
+        {
+            FreeFile(fd);
+            unlink(model_swap_name);
+            elog(ERROR, "Failed to write binary data to %s \n", model_swap_name);
+
+        }
+
+        LWLockRelease(&g_state->lock);
+
+        /* Flush the file to ensure all data is written */
+        if (fflush(fd) != 0)
+        {
+            FreeFile(fd);
+            unlink(model_swap_name);
+            elog(ERROR, "Failed to flush %s", model_swap_name);
+        }
+
+        struct stat st;
+        if (fstat(fileno(fd), &st) == 0)
+        {
+            printf("File size of %s: %ld bytes", "modelcopy.gguf", st.st_size);
+        }
+        else
+        {
+            printf("Failed to get file size for %s", "modelcopy.gguf");
+        }
+
+        result = llama_load_model_from_file(model_swap_name, model_params);
+
+        FreeFile(fd);
+        unlink(model_swap_name);
+
+        if (result == NULL) elog(ERROR, "Failed to load Llama model from path: %s", path);
+    }
+    else /* model is cached */
+    {
+        printf("model is cached\n");
+        LWLockAcquire(&g_state->lock, LW_EXCLUSIVE);
+        printf("shared cache: path=%s\tvl_len=%d\n", g_state->path, g_state->vl_len_);
+        model_swap_name = "/tmp/cacheswap.gguf";
+
+        FILE *fd = AllocateFile(model_swap_name, PG_BINARY_W);
+        if (!fd) elog(ERROR, "Failed to open %s for writing\n", model_swap_name);
+
+        /* Write the binary data */
+        if (fwrite(g_state->data, g_state->vl_len_, 1, fd) != 1)
+        {
+            FreeFile(fd);
+            unlink(model_swap_name);
+            elog(ERROR, "Failed to write binary data to %s \n", model_swap_name);
+
+        }
+
+        /* Flush the file to ensure all data is written */
+        if (fflush(fd) != 0)
+        {
+            FreeFile(fd);
+            unlink(model_swap_name);
+            elog(ERROR, "Failed to flush %s", model_swap_name);
+        }
+
+        struct stat st;
+        if (fstat(fileno(fd), &st) == 0)
+        {
+            printf("File size of %s: %ld bytes", "modelcopy.gguf", st.st_size);
+        }
+        else
+        {
+            printf("Failed to get file size for %s", "modelcopy.gguf");
+        }
+
+        result = llama_load_model_from_file(model_swap_name, model_params);
+
+        LWLockRelease(&g_state->lock);
+
+        FreeFile(fd);
+        unlink(model_swap_name);
+
+    }
+
+    return result;
 }
 
 /* ---------- llama_model_type ---------- */
@@ -203,6 +354,44 @@ llama_model_out(PG_FUNCTION_ARGS)
     llama_free_model(model);
 
     PG_RETURN_CSTRING(result);
+}
+
+
+PG_FUNCTION_INFO_V1(llama_model_cache_add);
+Datum
+llama_model_cache_add(PG_FUNCTION_ARGS)
+{
+    Datum arg0 = PG_GETARG_DATUM(0);
+    char *path = VARDATA_ANY(arg0);
+    int32 path_len = VARSIZE_ANY_EXHDR(arg0);
+    Datum file_bytes;
+    int32 file_bytes_len;
+    bytea *result;
+
+    /* Initialize shared memory if not already done */
+    //
+
+    /* Check if path fits within the allocated space */
+    if (path_len >= LLAMASQL_MAX_MODEL_FILENAME) {
+        ereport(ERROR,
+                (errmsg("Path length exceeds allowed limit of %d", LLAMASQL_MAX_MODEL_FILENAME)));
+    }
+
+    file_bytes = DirectFunctionCall1(pg_read_binary_file_all, arg0);
+    file_bytes_len = VARSIZE_ANY_EXHDR(file_bytes);
+
+    /* Copy path into shared state */
+    memcpy(g_state->path, path, path_len);
+    g_state->path[path_len] = '\0';
+    g_state->vl_len_ = path_len;
+    memcpy(g_state->data, VARDATA_ANY(file_bytes), file_bytes_len);
+
+    result = palloc(VARHDRSZ + file_bytes_len);
+    SET_VARSIZE(result, VARHDRSZ + file_bytes_len);
+    memcpy(VARDATA(result), VARDATA_ANY(file_bytes), file_bytes_len);
+
+    /* Return a dummy value (e.g., true) */
+    PG_RETURN_BYTEA_P(result);
 }
 
 /* ---------- llama_model metadata ---------- */

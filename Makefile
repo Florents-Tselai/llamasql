@@ -59,7 +59,7 @@ llama-%: examples/%.c
 	$(CC) $(LLAMA_CFLAGS) $< -o $@ $(LLAMA_LDFLAGS)
 
 llama-examples: $(EXAMPLES_EXECS)
-EXTRA_CLEAN = $(EXAMPLES_EXECS) dist
+EXTRA_CLEAN = $(EXAMPLES_EXECS) dist $(wildcard /tmp/*.gguf)
 
 all: llama-examples
 

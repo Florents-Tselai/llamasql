@@ -2,6 +2,18 @@
 
 SELECT '/tmp/qwen2.gguf'::llama_model;
 
+/* ---------- model caching ----------
+The model should be loaded in shared memory.
+We corrupt the on-disk file and the rest of the tests should work nonetheless
+*/
+
+CREATE TABLE corruptor(a int, b text);
+INSERT INTO corruptor VALUES (1, 'one');
+\COPY corruptor TO '/tmp/qwen2.gguf' CSV
+
+-- This should load the model from shmem
+SELECT '/tmp/qwen2.gguf'::llama_model;
+
 /* ---------- llama_model metadata ---------- */
 SELECT llama_model_desc('/tmp/qwen2.gguf');
 SELECT pg_size_pretty(llama_model_size('/tmp/qwen2.gguf'::llama_model));

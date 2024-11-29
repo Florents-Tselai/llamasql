@@ -40,6 +40,15 @@ CREATE DOMAIN llama_token AS INTEGER;
 CREATE DOMAIN llama_pos AS INTEGER;
 CREATE DOMAIN llama_seq_id AS INTEGER;
 
+/* model_cache */
+
+CREATE FUNCTION llama_model_cache_add(text) RETURNS BYTEA LANGUAGE C AS 'MODULE_PATHNAME', 'llama_model_cache_add';
+
+-- CREATE FUNCTION llama_model_cache_list(IN integer, IN integer,
+--                              OUT f1 text, OUT f2 integer)
+--     RETURNS SETOF record LANGUAGE C AS 'MODULE_PATHNAME', 'llama_model_cache_list';
+
+
 /* llama_model metadata */
 
 CREATE FUNCTION llama_model_desc(llama_model) RETURNS text IMMUTABLE STRICT LANGUAGE C AS 'MODULE_PATHNAME', 'pg_llama_model_desc';
