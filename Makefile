@@ -49,7 +49,9 @@ models/qwen2.gguf:
 /tmp/%.gguf: models/%.gguf
 	cp $^ $@
 
-installcheck: $(MODELS_TMP_PATHS)
+download-test-models: $(MODELS_TMP_PATHS)
+
+installcheck: download-test-models
 	@echo "All models have been copied to /tmp"
 
 # ---------- Examples ----------
