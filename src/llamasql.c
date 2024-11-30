@@ -1,4 +1,84 @@
 #include "llamasql.h"
+#include "postgres.h"
+#include <utils/palloc.h>
+
+#include "stdlib.h"
+#include "stdio.h"
+#include "string.h"
+
+#include "fmgr.h"
+#include "utils/builtins.h"
+#include "utils/jsonb.h"
+#include "utils/datetime.h"
+#include "utils/date.h"
+#include "utils/array.h"
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <utils/guc.h>
+
+#if PG_VERSION_NUM >= 160000
+#include "varatt.h"
+
+#endif
+
+#if PG_VERSION_NUM < 130000
+#define TYPALIGN_DOUBLE 'd'
+#define TYPALIGN_INT 'i'
+#endif
+
+#include "llama.h"
+
+#include "fmgr.h"
+#include "funcapi.h"
+#include "utils/jsonb.h"
+#include "storage/lwlock.h"
+#include "storage/dsm_registry.h"
+#include "storage/shmem.h"
+
+PG_MODULE_MAGIC;
+
+/* ---------- llamasql limits and defaults  ---------- */
+
+#define LLAMASQL_MAX_MODEL_FILENAME     NAMEDATALEN             /* limit for a /path/to/file.gguf name */
+#define LLAMASQL_MAX_MODEL_FILE_SIZE    (1024 * 1024 * 1024)    /* 1GB: max size of a .gguf file in bytes*/
+#define LLAMASQL_SHMEM_NAME             "llamasql"              /* shared memory prefix */
+
+/* ---------- missing from libllama ---------- */
+
+typedef struct llama_context_params llama_context_params;
+typedef struct llama_model_params llama_model_params;
+typedef struct llama_model llama_model;
+
+llama_model* load_llama_model_from_buffer(void *buffer, Size buffer_size);
+llama_model* load_llama_model_from_cstring(const char* path);
+
+
+/* ---------- llama_model_type ---------- */
+
+/* Currently a llama_model_type is basically a text type that points to the .gguf model file
+ * Thus, vl_len_ is the length(/path/to/file.gguf)
+ * and data = "/path/to/file.gguf"
+ */
+typedef struct {
+    int32   vl_len_;		            /* varlena header (do not touch directly!) */
+    char    data[FLEXIBLE_ARRAY_MEMBER];
+} llama_model_type;
+
+
+#define PG_GETARG_LLAMA_MODEL(n) ({ \
+    llama_model_type* model_data = (llama_model_type*)PG_GETARG_POINTER(n); \
+    const char* model_path = VARDATA(model_data); \
+    load_llama_model_from_cstring(model_path); \
+})
+
+/* ---------- llama params <--> jsonb  ---------- */
+
+llama_context_params    parse_context_params_from_jsonb(Jsonb *in_context_params);
+llama_model_params      parse_model_params_from_jsonb(Jsonb *in_model_params);
+
+#define PG_GETARG_LLAMA_CONTEXT_PARAMS(n) PG_ARGISNULL(n) ? llama_context_default_params() : parse_context_params_from_jsonb(PG_GETARG_JSONB_P(n))
+#define PG_GETARG_LLAMA_MODEL_PARAMS(n) PG_ARGISNULL(n) ? llama_model_default_params() : parse_model_params_from_jsonb(PG_GETARG_JSONB_P(n))
 
 llama_context_params parse_context_params_from_jsonb(Jsonb *in_context_params)
 {
@@ -150,18 +230,7 @@ llama_model_params parse_model_params_from_jsonb(Jsonb *in_model_params)
     return model_params;
 }
 
-
-#include "fmgr.h"
-#include "funcapi.h"
-#include "utils/jsonb.h"
-#include "storage/lwlock.h"
-#include "storage/dsm_registry.h"
-#include "storage/shmem.h"
-
-
-#define LLAMASQL_MAX_MODEL_FILENAME NAMEDATALEN
-#define LLAMASQL_MAX_MODEL_FILE_SIZE (1024 * 1024 * 1024) /* 1GB */
-#define LLAMASQL_SHMEM_NAME "llamasql"
+/* ---------- shared state  ---------- */
 
 /*
  * FTTB, for simplicity we only cache *one* model.
@@ -172,21 +241,34 @@ typedef struct LLamaSQLSharedState
 {
     LWLock          lock;
 
-    char    path[LLAMASQL_MAX_MODEL_FILENAME];              /* filepath to be used as a key*/
-    int32	vl_len_;                        /* number of bytes in the file */
-    char    data[FLEXIBLE_ARRAY_MEMBER];    /* actual file bytes */
+    char    path[LLAMASQL_MAX_MODEL_FILENAME];  /* filepath to be used as a key*/
+    int32	vl_len_;                            /* number of bytes in the file */
+    char    data[FLEXIBLE_ARRAY_MEMBER];        /* actual file bytes */
 
 } LLamaSQLSharedState;
+
+static void llamasql_init_state(void *ptr);
+static bool llamasql_init_shmem(void);
 
 /* Pointers to shared-memory */
 static LLamaSQLSharedState *g_state = NULL;
 
+
+/*
+ * Module load callback
+ */
+void
+_PG_init(void)
+{
+    llama_backend_init();
+    llamasql_init_shmem();
+}
+
 static void
-llsql_init_state(void *ptr)
+llamasql_init_state(void *ptr)
 {
     LLamaSQLSharedState *state = (LLamaSQLSharedState *) ptr;
     LWLockInitialize(&state->lock, LWLockNewTrancheId());
-
 }
 
 static bool
@@ -195,18 +277,11 @@ llamasql_init_shmem(void)
     bool found;
     g_state = GetNamedDSMSegment(LLAMASQL_SHMEM_NAME,
                                    offsetof(LLamaSQLSharedState, data) + LLAMASQL_MAX_MODEL_FILE_SIZE,
-                                   llsql_init_state,
+                                   llamasql_init_state,
                                    &found);
     LWLockRegisterTranche(g_state->lock.tranche, LLAMASQL_SHMEM_NAME);
 
     return found;
-}
-
-void
-_PG_init(void)
-{
-    llama_backend_init();
-    llamasql_init_shmem();
 }
 
 llama_model* load_llama_model_from_cstring(const char* path)
@@ -289,7 +364,6 @@ llama_model* load_llama_model_from_cstring(const char* path)
             FreeFile(fd);
             unlink(model_swap_name);
             elog(ERROR, "Failed to write binary data to %s \n", model_swap_name);
-
         }
 
         /* Flush the file to ensure all data is written */
@@ -322,8 +396,12 @@ llama_model* load_llama_model_from_cstring(const char* path)
     return result;
 }
 
+/* ---------- SQL Functions ---------- */
+
+
 /* ---------- llama_model_type ---------- */
 
+PG_FUNCTION_INFO_V1(llama_model_in);
 Datum
 llama_model_in(PG_FUNCTION_ARGS)
 {
@@ -338,6 +416,7 @@ llama_model_in(PG_FUNCTION_ARGS)
     PG_RETURN_POINTER(result);
 }
 
+PG_FUNCTION_INFO_V1(llama_model_out);
 Datum
 llama_model_out(PG_FUNCTION_ARGS)
 {
@@ -369,7 +448,6 @@ llama_model_cache_add(PG_FUNCTION_ARGS)
     bytea *result;
 
     /* Initialize shared memory if not already done */
-    //
 
     /* Check if path fits within the allocated space */
     if (path_len >= LLAMASQL_MAX_MODEL_FILENAME) {
@@ -395,6 +473,12 @@ llama_model_cache_add(PG_FUNCTION_ARGS)
 }
 
 /* ---------- llama_model metadata ---------- */
+PG_FUNCTION_INFO_V1(pg_llama_model_desc);
+PG_FUNCTION_INFO_V1(pg_llama_model_size);
+PG_FUNCTION_INFO_V1(pg_llama_model_n_params);
+PG_FUNCTION_INFO_V1(pg_llama_model_has_encoder);
+PG_FUNCTION_INFO_V1(pg_llama_model_has_decoder);
+PG_FUNCTION_INFO_V1(pg_llama_model_is_recurrent);
 
 Datum
 pg_llama_model_desc(PG_FUNCTION_ARGS)
@@ -473,6 +557,40 @@ pg_llama_model_is_recurrent(PG_FUNCTION_ARGS)
 
 /* ---------- vocab / tokens---------- */
 
+typedef int32 llama_token_type;
+
+#define LLAMATOKENOID INT4OID
+
+#define PG_GETARG_LLAMA_TOKEN(n)    PG_GETARG_INT32(n)
+#define PG_RETURN_LLAMA_TOKEN(x)    PG_RETURN_INT32(x)
+
+/*
+ * Usage:
+ * int n_input_tokens;
+ * llama_token *input_tokens = PG_GETARG_LLAMA_TOKENS(n, n_input_tokens);
+ */
+#define PG_GETARG_LLAMA_TOKENS(n, n_input_tokens) ({ \
+    ArrayType *_input_array = PG_GETARG_ARRAYTYPE_P(n); \
+    if (ARR_NDIM(_input_array) != 1) { \
+        ereport(ERROR, \
+        (errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
+        errmsg("Only one-dimensional arrays are supported"))); \
+    } \
+    (n_input_tokens) = ArrayGetNItems(ARR_NDIM(_input_array), ARR_DIMS(_input_array)); \
+    int32 *_array_data = (int32 *) ARR_DATA_PTR(_input_array); \
+    llama_token *_tokens = palloc((n_input_tokens) * sizeof(llama_token)); \
+    for (int _i = 0; _i < (n_input_tokens); _i++) { \
+    _tokens[_i] = (llama_token)_array_data[_i]; \
+    } \
+    _tokens; \
+})
+
+PG_FUNCTION_INFO_V1(pg_llama_token_text);
+PG_FUNCTION_INFO_V1(pg_llama_token_score);
+
+PG_FUNCTION_INFO_V1(pg_llama_token_is_eog);
+PG_FUNCTION_INFO_V1(pg_llama_token_is_control);
+
 Datum
 pg_llama_token_text(PG_FUNCTION_ARGS)
 {
@@ -522,7 +640,13 @@ pg_llama_token_is_control(PG_FUNCTION_ARGS)
 }
 
 /* ---------- special tokens ---------- */
-
+PG_FUNCTION_INFO_V1(pg_llama_token_bos);
+PG_FUNCTION_INFO_V1(pg_llama_token_eos);
+PG_FUNCTION_INFO_V1(pg_llama_token_eot);
+PG_FUNCTION_INFO_V1(pg_llama_token_cls);
+PG_FUNCTION_INFO_V1(pg_llama_token_sep);
+PG_FUNCTION_INFO_V1(pg_llama_token_nl);
+PG_FUNCTION_INFO_V1(pg_llama_token_pad);
 Datum
 pg_llama_token_bos(PG_FUNCTION_ARGS)
 {
@@ -604,6 +728,16 @@ pg_llama_token_pad(PG_FUNCTION_ARGS)
 
 /*  ---------- tokenization ---------- */
 
+PG_FUNCTION_INFO_V1(pg_llama_tokenize);
+PG_FUNCTION_INFO_V1(pg_llama_detokenize);
+
+#define PG_GETARG_PROMPT(n, prompt_len) ({ \
+text *_text = PG_GETARG_TEXT_PP(n); \
+char *_prompt = text_to_cstring(_text); \
+(prompt_len) = VARSIZE_ANY_EXHDR(_text); \
+_prompt; \
+})
+
 Datum
 pg_llama_tokenize(PG_FUNCTION_ARGS)
 {
@@ -677,6 +811,17 @@ pg_llama_detokenize(PG_FUNCTION_ARGS)
     PG_RETURN_TEXT_P(cstring_to_text(text));
 }
 
+/* ---------- Generate API ---------- */
+
+#define PG_GETARG_PROMPT(n, prompt_len) ({ \
+text *_text = PG_GETARG_TEXT_PP(n); \
+char *_prompt = text_to_cstring(_text); \
+(prompt_len) = VARSIZE_ANY_EXHDR(_text); \
+_prompt; \
+})
+
+PG_FUNCTION_INFO_V1(pg_llama_generate_from_text);
+PG_FUNCTION_INFO_V1(pg_llama_generate_from_tokens);
 Datum
 pg_llama_generate_from_text(PG_FUNCTION_ARGS)
 {
