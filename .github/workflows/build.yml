@@ -63,6 +63,9 @@ jobs:
 
       - run: sudo systemctl restart postgresql@${{ matrix.postgres }}-main.service
 
+      - if: ${{ failure() }}
+        run: sudo journalctl -xeu postgresql@${{ matrix.postgres }}-main.service
+
       - run: sudo systemctl status postgresql@${{ matrix.postgres }}-main.service
 
       - run: make download-test-models
