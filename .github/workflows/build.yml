@@ -52,6 +52,9 @@ jobs:
         with:
           postgres-version: ${{ matrix.postgres }}
           dev-files: true
+          config: |
+            shared_preload_libraries = 'pg_stat_statements'
+            dynamic_library_path = '/usr/local/lib'
 
       - run: make all -j
 
