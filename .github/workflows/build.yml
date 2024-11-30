@@ -57,9 +57,7 @@ jobs:
 
       - run: sudo make install
 
-      - name: Add shared_preload_libraries and restart PostgreSQL
-        run: |
-          echo "shared_preload_libraries = 'llamasql'" | sudo tee -a "/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf"
+      - run: echo "shared_preload_libraries = 'llamasql'" | sudo tee -a "/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf"
 
       - run: sudo systemctl restart postgresql@${{ matrix.postgres }}-main.service
 
