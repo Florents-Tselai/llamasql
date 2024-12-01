@@ -48,6 +48,8 @@ jobs:
           cmake --build . --config Release -j $(sysctl -n hw.logicalcpu)
           sudo make install
 
+      - run: sudo ldconfig
+
       - uses: ankane/setup-postgres@v1
         with:
           postgres-version: ${{ matrix.postgres }}
