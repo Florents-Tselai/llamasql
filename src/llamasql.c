@@ -40,9 +40,10 @@ PG_MODULE_MAGIC;
 
 /* ---------- llamasql limits and defaults  ---------- */
 
-#define LLAMASQL_MAX_MODEL_FILENAME     NAMEDATALEN             /* limit for a /path/to/file.gguf name */
+#define LLAMASQL_MAX_MODEL_FILENAME     MAXPGPATH               /* limit for a /path/to/file.gguf name */
 #define LLAMASQL_MAX_MODEL_FILE_SIZE    (1024 * 1024 * 1024)    /* 1GB: max size of a .gguf file in bytes*/
 #define LLAMASQL_SHMEM_NAME             "llamasql"              /* shared memory prefix */
+#define LLAMASQL_SWAP_DIR_NAME          "/var/tmp"
 
 /* ---------- missing from libllama ---------- */
 
@@ -284,114 +285,69 @@ llamasql_init_shmem(void)
     return found;
 }
 
-llama_model* load_llama_model_from_cstring(const char* path)
+llama_model* load_llama_model_from_buffer(void *buffer, Size size)
 {
     llama_model *result = NULL;
     llama_model_params model_params = llama_model_default_params();
 
-    char *model_swap_name = "modelswap.gguf";
+    char fname[] = "swapmodel.gguf";
+    mkstemp(fname);
+    FILE *f = AllocateFile(fname, PG_BINARY_W);
+    if (!f) elog(ERROR, "Failed to open %s for writing\n", fname);
+
+    if (fwrite(buffer, g_state->vl_len_, 1, f) != 1)
+    {
+        FreeFile(f);
+        unlink(fname);
+        elog(ERROR, "Failed to write binary data to %s \n", fname);
+    }
+
+    /* Flush the file to ensure all data is written */
+    if (fflush(f) != 0)
+    {
+        FreeFile(f);
+        unlink(fname);
+        elog(ERROR, "Failed to flush %s", fname);
+    }
+
+    result = llama_load_model_from_file(fname, model_params);
+    if (result == NULL) elog(ERROR, "Failed to load Llama model from path: %s", fname);
+
+    FreeFile(f);
+    unlink(fname);
+
+    return result;
+}
+
+
+llama_model* load_llama_model_from_cstring(const char* path)
+{
+    llama_model *result = NULL;
 
     LWLockAcquire(&g_state->lock, LW_EXCLUSIVE);
+
+    /* Check if model is in g_state cache */
     bool model_is_cached = strcmp(g_state->path, path) == 0;
-    LWLockRelease(&g_state->lock);
 
     if (!model_is_cached)
     {
+
         Datum model_file = DirectFunctionCall1(pg_read_binary_file_all, PointerGetDatum(cstring_to_text(path)));
-        LWLockAcquire(&g_state->lock, LW_EXCLUSIVE);
 
         memset(g_state->path, 0, LLAMASQL_MAX_MODEL_FILENAME);
         strncpy(g_state->path, path, LLAMASQL_MAX_MODEL_FILENAME-1);
         g_state->path[LLAMASQL_MAX_MODEL_FILENAME-1] = '\0';
+
         g_state->vl_len_ = VARSIZE_ANY_EXHDR(model_file);
         memcpy(g_state->data, VARDATA_ANY(model_file), g_state->vl_len_);
-
-
-        printf("shared cache: path=%s\tvl_len=%d\n", g_state->path, g_state->vl_len_);
-
-        FILE *fd = AllocateFile(model_swap_name, PG_BINARY_W);
-        if (!fd) elog(ERROR, "Failed to open %s for writing\n", model_swap_name);
-
-        /* Write the binary data */
-        if (fwrite(g_state->data, g_state->vl_len_, 1, fd) != 1)
-        {
-            FreeFile(fd);
-            unlink(model_swap_name);
-            elog(ERROR, "Failed to write binary data to %s \n", model_swap_name);
-
-        }
-
-        LWLockRelease(&g_state->lock);
-
-        /* Flush the file to ensure all data is written */
-        if (fflush(fd) != 0)
-        {
-            FreeFile(fd);
-            unlink(model_swap_name);
-            elog(ERROR, "Failed to flush %s", model_swap_name);
-        }
-
-        struct stat st;
-        if (fstat(fileno(fd), &st) == 0)
-        {
-            printf("File size of %s: %ld bytes", "modelcopy.gguf", st.st_size);
-        }
-        else
-        {
-            printf("Failed to get file size for %s", "modelcopy.gguf");
-        }
-
-        result = llama_load_model_from_file(model_swap_name, model_params);
-
-        FreeFile(fd);
-        unlink(model_swap_name);
-
-        if (result == NULL) elog(ERROR, "Failed to load Llama model from path: %s", path);
+        printf("model %s is now loaded in cache", path);
     }
-    else /* model is cached */
-    {
-        printf("model is cached\n");
-        LWLockAcquire(&g_state->lock, LW_EXCLUSIVE);
-        printf("shared cache: path=%s\tvl_len=%d\n", g_state->path, g_state->vl_len_);
-        model_swap_name = "/tmp/cacheswap.gguf";
 
-        FILE *fd = AllocateFile(model_swap_name, PG_BINARY_W);
-        if (!fd) elog(ERROR, "Failed to open %s for writing\n", model_swap_name);
 
-        /* Write the binary data */
-        if (fwrite(g_state->data, g_state->vl_len_, 1, fd) != 1)
-        {
-            FreeFile(fd);
-            unlink(model_swap_name);
-            elog(ERROR, "Failed to write binary data to %s \n", model_swap_name);
-        }
+    result = load_llama_model_from_buffer(g_state->data, g_state->vl_len_);
 
-        /* Flush the file to ensure all data is written */
-        if (fflush(fd) != 0)
-        {
-            FreeFile(fd);
-            unlink(model_swap_name);
-            elog(ERROR, "Failed to flush %s", model_swap_name);
-        }
+    LWLockRelease(&g_state->lock);
 
-        struct stat st;
-        if (fstat(fileno(fd), &st) == 0)
-        {
-            printf("File size of %s: %ld bytes", "modelcopy.gguf", st.st_size);
-        }
-        else
-        {
-            printf("Failed to get file size for %s", "modelcopy.gguf");
-        }
-
-        result = llama_load_model_from_file(model_swap_name, model_params);
-
-        LWLockRelease(&g_state->lock);
-
-        FreeFile(fd);
-        unlink(model_swap_name);
-
-    }
 
     return result;
 }
